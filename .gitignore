@@ -41,3 +41,12 @@ avci/exploit/pfcg_ref.py
 # junk artifacts with private-use chars in the name
 80
 
+
+# --- never commit secrets ---
+.env
+.env.*
+*.vault
+vault.key
+*.pem
+*.key
+!scripts/*.key.pub
