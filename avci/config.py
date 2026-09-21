@@ -34,6 +34,9 @@ class LLMSettings:
     max_tokens: int = int(os.environ.get("AVCI_LLM_MAX_TOKENS", "8192"))
     temperature: float = float(os.environ.get("AVCI_LLM_TEMPERATURE", "0.2"))
     request_timeout: float = float(os.environ.get("AVCI_LLM_TIMEOUT", "180"))
+    # Anthropic prompt caching (system prompt is the bulk of every call's
+    # prefix). OpenAI/DeepSeek/Moonshot cache server-side automatically.
+    prompt_cache: bool = os.environ.get("AVCI_LLM_CACHE", "1") == "1"
 
 
 @dataclass

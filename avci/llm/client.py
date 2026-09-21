@@ -69,7 +69,7 @@ class LLMClient:
             import litellm
             kwargs: dict[str, Any] = dict(
                 model=self._routed_model(),
-                messages=messages,
+                messages=self._maybe_cache(messages),
                 max_tokens=self.s.max_tokens,
                 temperature=self.s.temperature,
             )
@@ -106,6 +106,29 @@ class LLMClient:
         if self.s.base_url and "/" not in m:
             return f"openai/{m}"
         return m
+
+    # ------------------------------------------------------------------
+    def _maybe_cache(self, messages: list[dict]) -> list[dict]:
+        """Anthropic prompt caching: convert the system prompt into a
+        content block with an ephemeral cache breakpoint — it is the bulk
+        of every call's prefix (~1k lines + doctrine), so caching it cuts
+        per-turn input cost massively on long hunts. OpenAI, DeepSeek and
+        Moonshot cache server-side automatically; other providers either
+        ignore the block format or never see it (litellm translates).
+        """
+        if not getattr(self.s, "prompt_cache", True):
+            return messages
+        if "claude" not in self.s.model.lower():
+            return messages
+        out: list[dict] = []
+        for msg in messages:
+            if msg.get("role") == "system" and isinstance(msg.get("content"), str):
+                out.append({**msg, "content": [
+                    {"type": "text", "text": msg["content"],
+                     "cache_control": {"type": "ephemeral"}}]})
+            else:
+                out.append(msg)
+        return out
 
     # ------------------------------------------------------------------
     def _parse_litellm(self, raw: Any) -> LLMResponse:

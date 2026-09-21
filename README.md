@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
+  <a href="https://github.com/TiaMEOWS/avci/actions/workflows/ci.yml"><img src="https://github.com/TiaMEOWS/avci/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-%3E%3D3.11-3776ab" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/XBOW-104%2F104-brightgreen" alt="XBOW 104/104">
   <img src="https://img.shields.io/badge/probes-45%20oracle%20classes-orange" alt="45 probes">

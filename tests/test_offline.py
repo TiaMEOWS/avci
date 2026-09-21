@@ -888,3 +888,23 @@ def test_report_chains_render():
     assert "XSS" in md and "session" in md.lower()
     # member findings must be named (the old keys rendered an empty chain)
     assert "Reflected XSS in /search" in md.split("## Attack Chains")[1]
+
+
+def test_prompt_cache_transform():
+    """Anthropic-only ephemeral cache breakpoint on the system prompt."""
+    from avci.llm.client import LLMClient
+    from avci.config import LLMSettings
+    msgs = [{"role": "system", "content": "SYS"},
+            {"role": "user", "content": "hi"}]
+    c = LLMClient(LLMSettings(model="claude-sonnet-4-5"))
+    out = c._maybe_cache(msgs)
+    assert isinstance(out[0]["content"], list)
+    assert out[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert out[0]["content"][0]["text"] == "SYS"
+    assert out[1] == msgs[1]
+    # non-anthropic models pass through untouched
+    c2 = LLMClient(LLMSettings(model="deepseek/deepseek-chat"))
+    assert c2._maybe_cache(msgs) is msgs
+    # explicit opt-out
+    c3 = LLMClient(LLMSettings(model="claude-sonnet-4-5", prompt_cache=False))
+    assert c3._maybe_cache(msgs) is msgs

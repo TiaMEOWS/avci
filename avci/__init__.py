@@ -18,4 +18,4 @@ Design doctrine (each pillar borrowed from the strongest code audited in the
   * TUI dashboard .................. Textual worker-thread hunt view
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"

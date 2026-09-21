@@ -55,5 +55,6 @@ with the OpenAI SDK.
 | `AVCI_LLM_TEMPERATURE` | `0.2` | low — the loop wants precision |
 | `AVCI_LLM_TIMEOUT` | `180` | per-request seconds |
 | `AVCI_MAX_ITERATIONS` | `120` | hunt budget |
+| `AVCI_LLM_CACHE` | `1` | Anthropic prompt caching for the system prompt (the bulk of every call's prefix). OpenAI/DeepSeek/Moonshot cache server-side automatically. |
 
 Token/USD accounting lands in `runs/<id>/cost.jsonl` and the run summary.
