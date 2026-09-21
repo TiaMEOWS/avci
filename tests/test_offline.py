@@ -803,3 +803,88 @@ def test_mcp_filter_tools_proxy_prefix():
              "browser_snapshot", "other_thing"]
     keep = filter_tools(tools, ["browser_*", "proxy_*"])
     assert "other_thing" not in keep and "proxy_start" in keep
+
+
+# ======================================================================
+# v1.0.1 regressions — triage upload-cap misfire + report chains keys
+# ======================================================================
+
+_PHAR_EVIDENCE = (
+    'POST /sku_process data=<base64 phar> -> {"file_path":"/tmp/56e8.jpg"}; '
+    'then POST /read_sku.php file_path=/tmp/56e8.jpg -> body contains: '
+    'string(98) "O:14:"CustomTemplate":2:{...echo '
+    "file_get_contents('/flag.txt');...}\" followed by "
+    "FLAG{31e0f4208f7e281e085f10d078a03222b25914cedb8ce61d46520002b74086a0} "
+    "and object(CustomTemplate)#1 dump."
+)
+
+
+def test_triage_upload_rce_not_capped():
+    """XBEN-092 regression: an upload that delivers phar deserialization RCE
+    must NOT be capped by the digi upload-without-render rule."""
+    from avci.vulns.triage import ACCEPT, triage
+    f = Finding(
+        title="Unrestricted upload + phar:// deserialization RCE "
+              "(CustomTemplate gadget)",
+        severity="critical",
+        url="http://127.0.0.1:24555/read_sku.php",
+        cwe="CWE-502",
+        description="upload stores bytes; read_sku.php unserializes the "
+                    "phar manifest; CustomTemplate evals the data property",
+        evidence=_PHAR_EVIDENCE,
+        verdict="confirmed",
+    )
+    v = triage(f)
+    assert v.action == ACCEPT, v.reasons
+    assert v.severity == "critical"
+
+
+def test_triage_plain_upload_still_capped():
+    """The digi lesson itself stays intact: upload with no render path and
+    no code execution is a Low service bug."""
+    from avci.vulns.triage import DOWNGRADE, triage
+    f = Finding(
+        title="Unrestricted file upload on /avatar",
+        severity="medium",
+        url="https://t.io/avatar",
+        evidence="POST /avatar -> 200 OK, file stored at /uploads/x.php "
+                 "according to the JSON response body",
+    )
+    v = triage(f)
+    assert v.action == DOWNGRADE and v.severity == "low", v.reasons
+
+
+def test_triage_critical_needs_markers():
+    """Critical without execution/dump markers in evidence caps at High."""
+    from avci.vulns.triage import triage
+    f = Finding(
+        title="Possible RCE on /import",
+        severity="critical",
+        url="https://t.io/import",
+        evidence="POST /import -> 200 OK; response slightly longer than "
+                 "baseline, no output observed",
+    )
+    v = triage(f)
+    assert v.severity == "high"
+
+
+def test_report_chains_render():
+    """Regression: discover_chains() emits title/findings/impact — the
+    markdown renderer must consume exactly those keys."""
+    import tempfile
+    from avci.report.report import render_report
+    with tempfile.TemporaryDirectory() as td:
+        st = RunState(Path(td), "t")
+        st.findings.append(Finding(
+            "Reflected XSS in /search", "high", "https://t.io/search?q=x",
+            evidence="GET /search?q=<script> -> 200 reflected verbatim"))
+        st.findings.append(Finding(
+            "JWT session token accepts alg=none", "medium",
+            "https://t.io/api/me",
+            evidence="tampered token with alg=none accepted, session data "
+                     "returned for victim id"))
+        md = render_report(st, {"target": "t.io", "scope": ["t.io"]})
+    assert "## Attack Chains" in md
+    assert "XSS" in md and "session" in md.lower()
+    # member findings must be named (the old keys rendered an empty chain)
+    assert "Reflected XSS in /search" in md.split("## Attack Chains")[1]

@@ -93,11 +93,11 @@ def render_report(state: RunState, meta: dict | None = None) -> str:
             lines.append("## Attack Chains")
             lines.append("")
             for c in chains:
-                steps = " → ".join(c.get("steps", []))
+                steps = " → ".join(c.get("findings", []))
                 lines.append(f"* **[{c.get('severity', '?').upper()}]** "
-                             f"{c.get('name', 'chain')}: {steps}  ")
-                if c.get("rationale"):
-                    lines.append(f"  *{c['rationale']}*")
+                             f"{c.get('title', 'chain')}: {steps}  ")
+                if c.get("impact"):
+                    lines.append(f"  *{c['impact']}*")
             lines.append("")
 
     # ---- threat model ---------------------------------------------------

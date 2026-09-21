@@ -35,7 +35,14 @@ _CRITICAL_MARKERS = (
     "rce", "remote code", "command exec", "shell", "7*7", "49",
     "sql dump", "union select", "dumped", "admin token", "auth bypass",
     "authentication bypass", "account takeover", "ato", "metadata",
-    "169.254.169.254", "win.ini", "/etc/passwd", "root:",
+    "169.254.169.254", "win.ini", "/etc/passwd", "root:", "flag{",
+    "uid=", "unserializ", "deserializ", "file_get_contents(", "popen(",
+    "os.system", "whoami", "cmd.exe",
+)
+_RCE_MARKERS = (
+    "rce", "remote code", "command exec", "shell", "uid=", "flag{",
+    "unserializ", "deserializ", "file_get_contents(", "popen(",
+    "os.system", "whoami", "cmd.exe", "eval(",
 )
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[A-Za-z]{2,}\b")
 
@@ -146,7 +153,11 @@ def triage(finding) -> TriageVerdict:
         served = any(m in blob for m in (
             "render", "served", "xss", "<script", "svg", "text/html",
             "content-type: image", "location:", "execute"))
-        if not served:
+        # digi lesson targets upload-as-XSS hopes; an upload that delivers
+        # code execution (phar/pickle deserialization, webshell) is the
+        # opposite of "service bug" — never cap those.
+        rce = any(m in blob for m in _RCE_MARKERS)
+        if not served and not rce:
             v.cap("low", "upload stored but never rendered/served — service "
                          "bug, not XSS (digi chat-mdt lesson)")
 
