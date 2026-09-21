@@ -1,0 +1,37 @@
+{
+  "mcpServers": {
+    "wondersuite": {
+      "enabled": true,
+      "url": "http://127.0.0.1:3101/mcp",
+      "headers": {},
+      "allow_tools": [
+        "browser_*",
+        "proxy_*",
+        "navigate_*",
+        "click_*",
+        "fill_*",
+        "eval_*",
+        "content_*",
+        "screenshot_*",
+        "*page*",
+        "*tab*"
+      ],
+      "_comment": "live wondersuite.exe via mcp_202_shim :3101 (202-fix proxy)"
+    },
+    "tempmail": {
+      "enabled": false,
+      "command": "uvx",
+      "args": [
+        "tempmail-mcp"
+      ],
+      "_comment": "optional temp-mail MCP; AVCI's built-in mail.tm chain works without it"
+    },
+    "example_remote": {
+      "enabled": false,
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer CHANGE_ME"
+      }
+    }
+  }
+}

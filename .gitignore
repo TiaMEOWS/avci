@@ -1,0 +1,43 @@
+﻿# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+
+# --- avci runtime state (local only) ---
+runs/
+submissions/
+configs/notify.json
+identities.json
+hosts-test.db
+*.log
+
+# --- local scratch / ops ---
+nul
+/80
+.tmp*/
+tmp_*
+probe_*.json
+xb_tmp*
+memory-note.txt
+jsf_builtin.txt
+docs/media/_check*
+
+# --- XBOW ops scratch (the curated public harness lives in bench/) ---
+xbow/
+xbow_run*.sh
+xbow_par.sh
+xbow_sweep.sh
+avci/xbow/
+xbow-bench/
+
+avci/exploit/pfcg_ref.py
+
+80*
+
+# junk artifacts with private-use chars in the name
+80
+
