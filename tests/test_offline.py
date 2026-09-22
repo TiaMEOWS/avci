@@ -19,6 +19,7 @@ from avci.mcp.client import strip_invisibles  # noqa: E402
 from avci.config import Settings  # noqa: E402
 from avci.core.guardrail import (guard_output, scan_output,  # noqa: E402
                                  shield_output)
+from avci.exploit.mutate import CLASSES, mutate  # noqa: E402
 
 
 def test_scope_guard():
@@ -969,3 +970,127 @@ def test_guard_output_toggle_and_empty():
 
 def test_config_injection_guard_default_on():
     assert Settings().agent.injection_guard is True
+
+
+def test_config_llm_grace_defaults():
+    s = Settings()
+    assert s.llm.grace_retries == 2
+    assert s.llm.grace_wait == 90
+
+
+def test_mutate_deterministic_and_deduped():
+    a = mutate("1' UNION SELECT password FROM users--", "sqli")
+    b = mutate("1' UNION SELECT password FROM users--", "sqli")
+    assert a == b and a
+    assert len(a) == len(set(a))
+
+
+def test_mutate_class_transforms():
+    assert any("/**/" in v for v in
+               mutate("1 UNION SELECT password FROM users", "sqli"))
+    assert any("SeLeCt".lower() in v.lower() and v != v.lower()
+               for v in mutate("1 UNION SELECT 1", "sqli"))
+    xss = mutate("<script>alert(1)</script>", "xss")
+    assert any("<sCrIpT>" in v for v in xss)
+    assert any("prompt(1)" in v for v in xss)
+    assert any("self['al'+'ert'](1)" in v for v in xss)
+    ssti = mutate("{{7*7}}", "ssti")
+    assert "${7*7}" in ssti and "{% print(7*7) %}" in ssti
+    assert any("${IFS}" in v for v in mutate("; cat /etc/passwd", "cmdi"))
+    assert any("/???/" in v for v in mutate("| /bin/cat /flag", "cmdi"))
+    trav = mutate("../../../etc/passwd", "traversal")
+    assert any("%2e%2e%2f" in v for v in trav)
+    assert any("....//" in v for v in trav)
+    gen = mutate("a<b>'", "generic")
+    assert gen and all("<" not in v and ">" not in v for v in gen)
+
+
+def test_mutate_banned_and_seed():
+    vs = mutate("<script>alert(1)</script>", "xss", banned=["script"])
+    assert all("script" not in v.lower() for v in vs)
+    vs2 = mutate("1 UNION SELECT 1", "sqli", banned=["/**/"])
+    assert all("/**/" not in v for v in vs2)
+    a = mutate("1 UNION SELECT 1", "sqli", max_variants=64)
+    b = mutate("1 UNION SELECT 1", "sqli", seed=7, max_variants=64)
+    assert set(a) == set(b) and (a != b or len(a) <= 1)
+    capped = mutate("a b c d e", "generic", max_variants=3)
+    assert len(capped) <= 3
+    try:
+        mutate("x", "nope")
+        raise AssertionError("unknown class must raise")
+    except ValueError:
+        pass
+    assert mutate("", "sqli") == []
+
+
+def _mk_run(base, reqs=(), events=(), state=None, files=None):
+    d = base / "run"
+    d.mkdir(parents=True)
+    (d / "requests.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in reqs), encoding="utf-8")
+    (d / "events.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    (d / "state.json").write_text(json.dumps(state or {}), encoding="utf-8")
+    for name, body in (files or {}).items():
+        (d / name).write_text(body, encoding="utf-8")
+    return d
+
+
+def _autopsy():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "autopsy", ROOT / "bench" / "autopsy.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_autopsy_classifies_failure_modes(tmp_path):
+    aut = _autopsy()
+    req200 = [{"method": "GET", "url": "http://t/x", "status": 200,
+               "tool": "http"}]
+
+    d = _mk_run(tmp_path / "a", events=[{"kind": "llm_lost"}])
+    assert aut.classify_run(d)["primary"] == "llm_lost"
+
+    d = _mk_run(tmp_path / "b", events=[{"kind": "net_stall"}])
+    assert aut.classify_run(d)["primary"] == "planning_loop"
+
+    d = _mk_run(tmp_path / "c")
+    assert aut.classify_run(d)["primary"] == "dead_no_requests"
+
+    d = _mk_run(tmp_path / "d",
+                reqs=[{"status": 429, "url": "http://t/x"}] * 3
+                     + [dict(r) for r in req200] * 6,
+                state={"duration_s": 4000})
+    assert aut.classify_run(d)["primary"] == "ratelimit_wall"
+
+    d = _mk_run(tmp_path / "e",
+                reqs=[{"status": 403, "url": "http://t/x"}] * 6
+                     + [dict(r) for r in req200] * 4,
+                state={"duration_s": 4000})
+    assert aut.classify_run(d)["primary"] == "filter_wall"
+
+    d = _mk_run(tmp_path / "f", reqs=[dict(r) for r in req200] * 5,
+                state={"duration_s": 120})
+    assert aut.classify_run(d)["primary"] == "gave_up_early"
+
+    d = _mk_run(tmp_path / "g", reqs=[dict(r) for r in req200] * 60,
+                state={"duration_s": 3000})
+    assert aut.classify_run(d)["primary"] == "no_findings_filed"
+
+    d = _mk_run(tmp_path / "h", reqs=[dict(r) for r in req200] * 60,
+                state={"duration_s": 3000, "findings": [{"title": "xss"}]})
+    assert aut.classify_run(d)["primary"] == "found_wrong_bug"
+
+    flag = aut.expected_flag("XBEN-999-24")
+    d = _mk_run(tmp_path / "i", reqs=[dict(r) for r in req200] * 60,
+                state={"duration_s": 3000},
+                files={"evidence.md": f"proof: {flag}"})
+    rep = aut.classify_run(d, flag=flag)
+    assert rep["primary"] == "solved_but_unscored"
+    assert rep["flag_seen"] is True
+
+    assert aut.expected_flag("XBEN-001-24") == (
+        "FLAG{" + __import__("hashlib").sha256(b"XBEN-001-24").hexdigest()
+        + "}")

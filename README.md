@@ -38,7 +38,8 @@
   [docs/models.md](docs/models.md).
 - **Built for the long run.** Per-host token-bucket rate limiting with
   429/5xx backoff, deterministic context compaction, checkpoint/resume,
-  tamper-evident evidence vault, full request audit log.
+  provider-outage grace retries (`AVCI_LLM_GRACE`), tamper-evident
+  evidence vault, full request audit log.
 - **104/104 on XBOW.** Validated against the complete XBOW
   validation-benchmarks suite — every challenge, every difficulty level.
   Full pass@N across attempts; pass@1 is 65/104 (62%) — methodology and
@@ -77,7 +78,7 @@ AVCI_ALLOW_PRIVATE=1 avci hunt --scope 127.0.0.1:8901
 |---|---|
 | **Recon** (8 phases) | subdomains (CT logs / Wayback / DNS / subfinder) → liveness + tech → BFS crawler → JS endpoint/secret/sourcemap mining → param reflection discovery → port sweep → sensitive-path discovery (signature-verified) → dangling-CNAME takeover |
 | **Hunt** | 45 oracle-backed probe classes: XSS (context-aware), SQLi (error/boolean/time), SSTI, command injection, SSRF (metadata + OOB), XXE, IDOR/BOLA, mass assignment, race/TOCTOU, JWT tamper, GraphQL depth/batch/suggestions, cache deception/poisoning, upload bypass, deserialization, password-reset poisoning, default creds, account enumeration… |
-| **Exploit toolkit** | pure-Python phar forge, pickle RCE (return/template/blind channels), CBC padding oracle, php://filter chain generator, JSFuck encoder, raw-socket request smuggling, bounded HTTP burst racer |
+| **Exploit toolkit** | pure-Python phar forge, pickle RCE (return/template/blind channels), CBC padding oracle, php://filter chain generator, JSFuck encoder, raw-socket request smuggling, bounded HTTP burst racer, deterministic payload mutation engine (banned-aware WAF bypass) |
 | **Identity** | temp-mail registration (mail.tm + GuerrillaMail fallback), OTP extraction, encrypted session vault, **dual-identity A/B engine** for cross-tenant BOLA proof, auth profiles for provided accounts |
 | **Browser** | any MCP browser server (stdio or streamable-http) keyword-routed per action; Playwright local fallback; DOM-XSS sink discovery; proxy traffic export → replay templates |
 | **Discipline** | coverage ledger (finish is refused with open items), evidence oracle, triage gate, AI gauntlet, prompt-injection guardrail, SHA-256 evidence vault, JSONL request audit |

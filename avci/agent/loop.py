@@ -444,6 +444,33 @@ class HunterAgent:
                 "context": {"type": "string",
                             "description": "string (default) | expr"},
             }, ["code"]),
+            schema("mutate_payload", (
+                "Deterministic WAF/filter bypass: express the SAME payload "
+                "through different surface forms (keyword case/comment "
+                "splits, encoding ladder, SSTI delimiter swaps, IFS/glob "
+                "tricks, traversal encodings) and get a ranked variant "
+                "list. Use when a probe is rejected with 403/406 or the "
+                "app names forbidden characters. Pass banned=[chars or "
+                "substrings the target rejected] — variants containing "
+                "them are dropped before ranking. Same input -> same "
+                "output; bump seed for a fresh order. Fire the top "
+                "variants through the SAME request shape and diff the "
+                "responses — a response that suddenly differs means the "
+                "filter only ever saw a surface form."
+            ), {
+                "payload": {"type": "string",
+                            "description": "the blocked payload, verbatim"},
+                "cls": {"type": "string",
+                        "description": ("sqli | xss | ssti | cmdi | "
+                                        "traversal | generic (default)")},
+                "banned": {"type": "array", "items": {"type": "string"},
+                           "description": ("chars/substrings the target "
+                                           "named as forbidden")},
+                "max_variants": {"type": "integer",
+                                 "description": "cap (default 24, max 64)"},
+                "seed": {"type": "integer",
+                         "description": "0 = canonical order; N = rotated"},
+            }, ["payload"]),
             schema("http_burst", (
                 "Fire up to 24 requests NEAR-SIMULTANEOUSLY (one async "
                 "batch, shared cookie jar). The race/TOCTOU probe: pair a "
@@ -680,6 +707,27 @@ class HunterAgent:
     # ==================================================================
     # dispatch
     # ==================================================================
+    async def _chat_resilient(self, messages, tools):
+        """The client retries transport errors for ~2min; provider
+        outages outlive that. Grant a few long-grace rounds before
+        declaring llm_lost — a 90s nap is cheap next to a dead
+        iteration budget (autopsy: llm_lost was 58/322 XBOW attempts)."""
+        grace = max(0, int(self.s.llm.grace_retries))
+        wait = max(0.0, float(self.s.llm.grace_wait))
+        for round_no in range(grace + 1):
+            try:
+                return await asyncio.to_thread(
+                    self.llm.chat, messages, tools)
+            except Exception as exc:  # noqa: BLE001
+                if round_no >= grace:
+                    raise
+                self.state.log_event("llm_grace", round=round_no + 1,
+                                     error=str(exc))
+                self._hook("error", f"LLM down — grace retry "
+                                    f"{round_no + 1}/{grace} in {wait:.0f}s")
+                if wait:
+                    await asyncio.sleep(wait)
+
     async def _dispatch(self, name: str, args: dict) -> str:
         try:
             if name.startswith("mcp_"):
@@ -1323,6 +1371,27 @@ class HunterAgent:
             st.observe(json.dumps(out)[:600])
             return json.dumps(out)
 
+        if name == "mutate_payload":
+            from ..exploit.mutate import CLASSES, mutate
+            try:
+                variants = mutate(
+                    args["payload"], args.get("cls") or "generic",
+                    banned=args.get("banned") or (),
+                    max_variants=min(int(args.get("max_variants") or 24),
+                                     64),
+                    seed=int(args.get("seed") or 0))
+            except ValueError as e:
+                return f"ERROR: {e}"
+            out = {"ok": bool(variants), "count": len(variants),
+                   "variants": variants,
+                   "note": ("Fire variants through the SAME request shape "
+                            "and diff responses. ok=false means every "
+                            "variant still carries a banned char — change "
+                            "the approach (encoding channel, alternate "
+                            "sink), not the surface form.")}
+            st.observe(json.dumps(out)[:600])
+            return json.dumps(out)
+
         if name == "http_burst":
             import hashlib
             import time as _time
@@ -1876,7 +1945,7 @@ class HunterAgent:
                and not self.finish_flag["done"] and not self.stop_requested):
             self.iterations += 1
             try:
-                resp = await asyncio.to_thread(self.llm.chat, messages, tools)
+                resp = await self._chat_resilient(messages, tools)
             except Exception as exc:  # noqa: BLE001 — brain died mid-hunt
                 llm_lost = True
                 st.log_event("llm_lost", error=str(exc),

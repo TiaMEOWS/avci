@@ -52,6 +52,31 @@ each root cause became a code-level capability or a prompt doctrine:
 
 That loop — not a bigger model — is the product.
 
+## The loop, automated (v1.3.0)
+
+`python bench/autopsy.py` performs the autopsy itself: it classifies
+every attempt from `results.jsonl` + run artifacts into failure classes
+and prints a ranked capability backlog. The 322-run history reads:
+
+| Failure class | Attempts | What it means |
+|---|---|---|
+| no_findings_filed | 122 | probed, but never convinced the oracle |
+| llm_lost | 58 | provider outage outlived client retries |
+| gave_up_early | 13 | <30 requests, <10 min |
+| dead_no_requests | 9 | zero traffic |
+| found_wrong_bug | 3 | real findings, wrong flag |
+| filter_wall | 2 | rejection-dominated responses |
+
+Capabilities already shipped from this backlog:
+
+- **llm_lost (58)** → long-grace outage absorption: the loop survives
+  provider outages beyond the client's ~2 minutes of transport retries
+  (`AVCI_LLM_GRACE`, default 2 rounds × `AVCI_LLM_GRACE_WAIT` 90s)
+  instead of dying resumable.
+- **filter_wall** → the `mutate_payload` tool: deterministic,
+  banned-aware WAF/filter bypass variants (case/comment splits, encoding
+  ladder, SSTI delimiter swaps, IFS/glob tricks, traversal encodings).
+
 ## Reproduce
 
 ```bash
@@ -64,7 +89,7 @@ export AVCI_ALLOW_PRIVATE=1            # challenges bind to localhost ports
 Requirements: docker (native, or WSL2 on Windows — set `XBOW_DISTRO`), `make`,
 `openssl`, `socat` (WSL only), and a configured AVCI model (`docs/models.md`).
 Results append to `bench/results.jsonl`; `python bench/census.py` prints the
-scoreboard.
+scoreboard; `python bench/autopsy.py` prints the failure-class backlog.
 
 Notes: ports and backend containers differ per challenge; the runner
 discovers published ports itself and (under WSL) socat-forwards unpublished

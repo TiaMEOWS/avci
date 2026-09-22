@@ -151,6 +151,97 @@ def test_e2e_injection_guardrail_shields_target_content(monkeypatch):
         srv.server_close()
 
 
+def test_e2e_mutate_payload_tool_dispatch(monkeypatch):
+    """The mutation engine is wired: schema reaches the brain, dispatch
+    returns ranked variants, guardrail passes the JSON through clean."""
+    monkeypatch.setenv("AVCI_GAUNTLET", "0")
+
+    srv = HTTPServer(("127.0.0.1", 0), Lab)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            settings = Settings.load(scope=[f"127.0.0.1:{port}"])
+            guard = ScopeGuard(rules=[f"127.0.0.1:{port}"], allow_private=True)
+            agent = HunterAgent(settings, guard, Path(td), "e2e-mutate")
+
+            class CaptureLLM(ScriptLLM):
+                def __init__(self, script):
+                    super().__init__(script)
+                    self.seen: list[list[dict]] = []
+
+                def chat(self, messages, tools=None):
+                    self.seen.append([dict(m) for m in messages])
+                    return super().chat(messages, tools)
+
+            agent.llm = CaptureLLM([
+                [("mutate_payload", {"payload": "1 UNION SELECT 1--",
+                                     "cls": "sqli", "banned": ["'"]})],
+                [("finish", {"summary": "mutate dispatch run"})],
+            ])
+
+            result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
+
+            assert result["finished"] is True, result
+            tool_msgs = [m for turn in agent.llm.seen for m in turn
+                         if m.get("role") == "tool"]
+            assert tool_msgs
+            out = json.loads(tool_msgs[0]["content"])
+            assert out["ok"] is True and out["count"] > 0
+            assert any("/**/" in v or "SELECT".lower() != v.lower()
+                       for v in out["variants"])
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_e2e_llm_grace_recovers_from_outage(monkeypatch):
+    """A provider outage that kills the client's internal retries must not
+    kill the hunt: grace rounds absorb it and the run completes."""
+    monkeypatch.setenv("AVCI_GAUNTLET", "0")
+
+    srv = HTTPServer(("127.0.0.1", 0), Lab)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            settings = Settings.load(scope=[f"127.0.0.1:{port}"],
+                                     overrides={"llm.grace_wait": 0})
+            guard = ScopeGuard(rules=[f"127.0.0.1:{port}"], allow_private=True)
+            agent = HunterAgent(settings, guard, Path(td), "e2e-grace")
+
+            class FlakyLLM(ScriptLLM):
+                def __init__(self, script, fail_times=2):
+                    super().__init__(script)
+                    self.fail_times = fail_times
+                    self.calls = 0
+
+                def chat(self, messages, tools=None):
+                    self.calls += 1
+                    if self.calls <= self.fail_times:
+                        raise RuntimeError("simulated provider outage")
+                    return super().chat(messages, tools)
+
+            agent.llm = FlakyLLM([
+                [("finish", {"summary": "survived the outage"})],
+            ])
+
+            result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
+
+            assert result["finished"] is True, result
+            assert agent.llm.calls == 3  # 2 outages + 1 success
+            events = [json.loads(line) for line in
+                      (Path(td) / "events.jsonl").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+            grace_hits = [e for e in events if e.get("kind") == "llm_grace"]
+            assert len(grace_hits) == 2
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 if __name__ == "__main__":
     class _MP:
         @staticmethod
@@ -158,5 +249,7 @@ if __name__ == "__main__":
             os.environ[k] = v
     test_e2e_scripted_hunt_against_lab(_MP())
     test_e2e_injection_guardrail_shields_target_content(_MP())
+    test_e2e_mutate_payload_tool_dispatch(_MP())
+    test_e2e_llm_grace_recovers_from_outage(_MP())
     print("E2E MOCK OK — loop, dispatch, oracle, triage, vault, report, "
-          "injection guardrail")
+          "injection guardrail, mutate tool, llm grace")

@@ -37,6 +37,11 @@ class LLMSettings:
     # Anthropic prompt caching (system prompt is the bulk of every call's
     # prefix). OpenAI/DeepSeek/Moonshot cache server-side automatically.
     prompt_cache: bool = os.environ.get("AVCI_LLM_CACHE", "1") == "1"
+    # provider outages outlive the client's ~2min of transport retries:
+    # grant the hunt a few long-grace rounds before declaring llm_lost
+    # (autopsy: llm_lost was 18% of all failed XBOW attempts)
+    grace_retries: int = int(os.environ.get("AVCI_LLM_GRACE", "2"))
+    grace_wait: float = float(os.environ.get("AVCI_LLM_GRACE_WAIT", "90"))
 
 
 @dataclass
