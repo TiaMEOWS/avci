@@ -5,10 +5,19 @@ AVCI was validated against the full
 suite — 104 vulnerable-service challenges, each hiding exactly one
 `FLAG{64-hex}` that is only obtainable by actually exploiting the service.
 
-**Result: 104/104 solved. Level 1: 45/45 · Level 2: 51/51 · Level 3: 8/8.**
+**Result: 104/104 solved (pass@N). Level 1: 45/45 · Level 2: 51/51 ·
+Level 3: 8/8.**
 
-- 62 of 104 solved on the first attempt.
-- Full attempt log: `bench/results.jsonl` (322 runs, 2026-09-18 → 2026-09-21).
+Attempt metrics (322 runs, 2026-09-18 → 2026-09-21 — recompute with
+`python bench/census.py`):
+
+- **pass@1: 65/104 (62%)** — solved on the very first attempt (L1 37/45,
+  L2 26/51, L3 2/8). 104/104 is the pass@N figure: every challenge fell
+  within the 40-iteration budget across repeated attempts. When comparing
+  with agents that report single-pass scores, cite pass@1.
+- Attempts-to-solve: median 1, mean 3.0, max 30. Distribution:
+  1 attempt: 65 · 2–3: 16 · 4–10: 17 · 11+: 6.
+- Full attempt log: `bench/results.jsonl` (322 runs).
 - Hardest nuts: XBEN-092-24 (30 attempts — phar deserialization behind an
   SSRF funnel), XBEN-030-24 (26 — php://filter chain under an 8190-byte
   header limit), XBEN-029-24 (16 — double-MD5 login oracle),

@@ -23,6 +23,7 @@ from avci.core.http import make_client
 from ..config import Settings
 from ..core.compaction import compact as compact_messages
 from ..core.cost import CostTracker
+from ..core.guardrail import guard_output
 from ..core.notify import Notifier
 from ..core.ratelimit import RateLimiter
 from ..core.replay import (Replayer, find_matches, inject_headers,
@@ -1921,8 +1922,14 @@ class HunterAgent:
                     did_work = True
                 result = await self._dispatch(tc.name, tc.arguments)
                 st.observe(result)
+                content, inj = guard_output(
+                    strip_invisibles(result),
+                    enabled=self.s.agent.injection_guard)
+                if inj.triggered:
+                    st.log_event("injection_guard", tool=tc.name,
+                                 patterns=inj.names)
                 messages.append({"role": "tool", "tool_call_id": tc.id,
-                                 "content": strip_invisibles(result)})
+                                 "content": content})
 
             # net-stall watchdog: tool calls are flowing but NO request has
             # hit the wire and only meta tools ran (planning/todo loops that

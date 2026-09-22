@@ -44,6 +44,8 @@ class AgentSettings:
     max_iterations: int = int(os.environ.get("AVCI_MAX_ITERATIONS", "120"))
     tool_call_timeout: float = float(os.environ.get("AVCI_TOOL_TIMEOUT", "600"))
     allow_private_targets: bool = os.environ.get("AVCI_ALLOW_PRIVATE", "0") == "1"
+    # scan tool output for prompt-injection before it reaches the LLM
+    injection_guard: bool = os.environ.get("AVCI_INJECTION_GUARD", "1") == "1"
 
 
 @dataclass

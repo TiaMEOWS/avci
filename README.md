@@ -41,7 +41,8 @@
   tamper-evident evidence vault, full request audit log.
 - **104/104 on XBOW.** Validated against the complete XBOW
   validation-benchmarks suite — every challenge, every difficulty level.
-  Reproduce it yourself: [docs/xbow.md](docs/xbow.md).
+  Full pass@N across attempts; pass@1 is 65/104 (62%) — methodology and
+  honest metrics: [docs/xbow.md](docs/xbow.md).
 
 ## Quickstart
 
@@ -79,7 +80,7 @@ AVCI_ALLOW_PRIVATE=1 avci hunt --scope 127.0.0.1:8901
 | **Exploit toolkit** | pure-Python phar forge, pickle RCE (return/template/blind channels), CBC padding oracle, php://filter chain generator, JSFuck encoder, raw-socket request smuggling, bounded HTTP burst racer |
 | **Identity** | temp-mail registration (mail.tm + GuerrillaMail fallback), OTP extraction, encrypted session vault, **dual-identity A/B engine** for cross-tenant BOLA proof, auth profiles for provided accounts |
 | **Browser** | any MCP browser server (stdio or streamable-http) keyword-routed per action; Playwright local fallback; DOM-XSS sink discovery; proxy traffic export → replay templates |
-| **Discipline** | coverage ledger (finish is refused with open items), evidence oracle, triage gate, AI gauntlet, SHA-256 evidence vault, JSONL request audit |
+| **Discipline** | coverage ledger (finish is refused with open items), evidence oracle, triage gate, AI gauntlet, prompt-injection guardrail, SHA-256 evidence vault, JSONL request audit |
 | **Output** | Markdown + dark HTML + SARIF reports, attack-chain discovery, OWASP/PCI-DSS/SOC2 compliance mapping, program-ready submission drafts (Intigriti/H1 style) |
 | **Ops** | parallel fleet (one hunter per target), standing surface watchtower with webhook paging, cross-run SQLite memory with duplicate radar, HAR/proxy ingest |
 
@@ -96,6 +97,10 @@ AVCI_ALLOW_PRIVATE=1 avci hunt --scope 127.0.0.1:8901
   engagements, and bug-bounty scope. Nothing else.
 - **Invasive tooling is gated:** sqlmap only runs with
   `AVCI_ENABLE_SQLMAP=1`.
+- **Prompt-injection guardrail:** target output is scanned for
+  instruction-like content before it reaches the LLM; hits are wrapped as
+  untrusted data, logged to `events.jsonl`, and never obeyed
+  (`AVCI_INJECTION_GUARD=0` disables).
 - **Every byte is logged:** `runs/<id>/requests.jsonl`, `events.jsonl`,
   `state.json`, plus a tamper-evident evidence vault verified at run end.
 

@@ -9,6 +9,7 @@ AVCI_GAUNTLET=0 (it has its own LLM pass, out of scope here)."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -105,10 +106,57 @@ def test_e2e_scripted_hunt_against_lab(monkeypatch):
         srv.server_close()
 
 
+def test_e2e_injection_guardrail_shields_target_content(monkeypatch):
+    """A page ordering the agent around must reach the brain wrapped as
+    untrusted data, and the hit must land in the audit log."""
+    monkeypatch.setenv("AVCI_GAUNTLET", "0")
+
+    srv = HTTPServer(("127.0.0.1", 0), Lab)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            settings = Settings.load(scope=[f"127.0.0.1:{port}"])
+            guard = ScopeGuard(rules=[f"127.0.0.1:{port}"], allow_private=True)
+            agent = HunterAgent(settings, guard, Path(td), "e2e-injection")
+
+            class CaptureLLM(ScriptLLM):
+                def __init__(self, script):
+                    super().__init__(script)
+                    self.seen: list[list[dict]] = []
+
+                def chat(self, messages, tools=None):
+                    self.seen.append([dict(m) for m in messages])
+                    return super().chat(messages, tools)
+
+            agent.llm = CaptureLLM([
+                [("http", {"method": "GET", "url": f"{base}/guestbook"})],
+                [("finish", {"summary": "injection fixture run"})],
+            ])
+
+            result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
+
+            assert result["finished"] is True, result
+            tool_msgs = [m for turn in agent.llm.seen for m in turn
+                         if m.get("role") == "tool"]
+            assert any("BEGIN UNTRUSTED OUTPUT" in (m.get("content") or "")
+                       for m in tool_msgs), tool_msgs
+            events = [json.loads(line) for line in
+                      (Path(td) / "events.jsonl").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+            assert any(e.get("kind") == "injection_guard" for e in events)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 if __name__ == "__main__":
     class _MP:
         @staticmethod
         def setenv(k, v):
             os.environ[k] = v
     test_e2e_scripted_hunt_against_lab(_MP())
-    print("E2E MOCK OK — loop, dispatch, oracle, triage, vault, report")
+    test_e2e_injection_guardrail_shields_target_content(_MP())
+    print("E2E MOCK OK — loop, dispatch, oracle, triage, vault, report, "
+          "injection guardrail")
