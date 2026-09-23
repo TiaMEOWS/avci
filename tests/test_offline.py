@@ -22,6 +22,133 @@ from avci.core.guardrail import (guard_output, scan_output,  # noqa: E402
 from avci.exploit.mutate import CLASSES, mutate  # noqa: E402
 
 
+# ---------------------------------------------------------------------------
+# WAF: JS-challenge detection + browser clearance transplant
+# ---------------------------------------------------------------------------
+
+def test_detect_js_challenge_families():
+    from avci.core.waf import detect_js_challenge
+    cf = ("<html><title>Just a moment...</title>"
+          "<script>window._cf_chl_opt={};</script></html>")
+    assert detect_js_challenge(403, {}, cf) == "cloudflare-iuam"
+    # DataDome answers 200 with the challenge page (strong marker)
+    assert detect_js_challenge(
+        200, {}, "<script src=https://geo.captcha-delivery.com/x.js>"
+        "var datadome=1;</script>") == "datadome"
+    assert detect_js_challenge(
+        403, {}, "<iframe src=/_Incapsula_Resource?x=1>") == "incapsula-js"
+    assert detect_js_challenge(
+        429, {}, "var bm_sz='x'; var _abck='y';") == "akamai-sensor"
+    # 503 + cf-mitigated header with no body marker still names cloudflare
+    assert detect_js_challenge(
+        503, {"cf-mitigated": "challenge"}, "") == "cloudflare-iuam"
+
+
+def test_detect_js_challenge_negatives():
+    from avci.core.waf import detect_js_challenge
+    # plain 200 page with a weak marker (akamai regex is not strong)
+    assert detect_js_challenge(200, {}, "we use _abck analytics") is None
+    # plain 403 with no markers at all
+    assert detect_js_challenge(403, {}, "Access Denied") is None
+    # normal app page
+    assert detect_js_challenge(
+        200, {}, "<html><body>welcome to the shop</body></html>") is None
+
+
+def test_challenge_markers_and_clearance_names():
+    from avci.core.waf import CLEARANCE_COOKIE_NAMES, challenge_markers
+    assert "cloudflare-iuam" in challenge_markers("<title>Just a moment")
+    assert challenge_markers("<html>totally normal</html>") == []
+    assert "cf_clearance" in CLEARANCE_COOKIE_NAMES
+
+
+def test_install_clearance_into_both_clients():
+    import httpx
+    from types import SimpleNamespace
+    from avci.agent.loop import HunterAgent
+    agent = SimpleNamespace(
+        _client=httpx.AsyncClient(),
+        probes=SimpleNamespace(_client=httpx.AsyncClient()))
+    res = {
+        "cookies": [
+            {"name": "cf_clearance", "value": "tok123",
+             "domain": ".target.test", "path": "/"},
+            {"name": "other", "value": "x", "domain": "", "path": "/"},
+        ],
+        "user_agent": "Mozilla/5.0 Chrome/126",
+    }
+    n = HunterAgent._install_clearance(agent, res)
+    assert n == 2
+    for client in (agent._client, agent.probes._client):
+        jar = {c.name: c.value for c in client.cookies.jar}
+        assert jar["cf_clearance"] == "tok123"
+        assert client.headers["user-agent"] == "Mozilla/5.0 Chrome/126"
+
+
+def test_browser_solves_js_challenge():
+    """Real headless Chromium vs a live JS-challenge wall: the lab gate
+    403s every request until JS sets cf_clearance and reloads — exactly
+    the Cloudflare IUAM shape. Plain httpx stays blocked; the harvested
+    clearance cookie passes."""
+    import asyncio
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import pytest
+    pytest.importorskip("playwright")
+
+    class Chal(BaseHTTPRequestHandler):
+        def log_message(self, *a):  # keep the test log quiet
+            pass
+
+        def do_GET(self):
+            if "cf_clearance=dev-pass" in (self.headers.get("Cookie") or ""):
+                body = b"<html><body><h1>welcome to the app</h1></body></html>"
+                self.send_response(200)
+            else:
+                body = (b"<html><title>Just a moment...</title>"
+                        b"<script>setTimeout(function(){"
+                        b"document.cookie='cf_clearance=dev-pass; path=/';"
+                        b"location.reload();},300);</script>"
+                        b"<p>cdn-cgi/challenge-platform</p></html>")
+                self.send_response(403)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), Chal)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{port}/"
+
+    async def run():
+        import httpx
+        from avci.browser.driver import BrowserDriver
+        drv = BrowserDriver()
+        try:
+            res = await drv.solve_js_challenge(url, wait_s=15)
+        except Exception as exc:  # chromium binary not installed, etc.
+            pytest.skip(f"chromium unavailable: {exc}")
+        finally:
+            await drv.close()
+        assert res["ok"], res
+        names = [c["name"] for c in res["cookies"]]
+        assert "cf_clearance" in names
+        async with httpx.AsyncClient() as cl:
+            blocked = await cl.get(url)
+            assert blocked.status_code == 403
+            for c in res["cookies"]:
+                cl.cookies.set(c["name"], c["value"])
+            passed = await cl.get(url)
+            assert passed.status_code == 200
+            assert "welcome to the app" in passed.text
+
+    try:
+        asyncio.run(run())
+    finally:
+        srv.shutdown()
+
+
 def test_scope_guard():
     g = ScopeGuard(rules=["example.com", "*.target.io"])
     assert g.host_allowed("example.com")

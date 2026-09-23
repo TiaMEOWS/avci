@@ -257,6 +257,70 @@ class BrowserDriver:
             return [dict(c) for c in await ctx.cookies()]
         return []
 
+    async def user_agent(self) -> str:
+        if self._mode == "local" and self._page:
+            try:
+                return str(await self._page.evaluate("navigator.userAgent"))
+            except Exception:  # noqa: BLE001
+                return ""
+        return ""
+
+    async def solve_js_challenge(self, url: str, wait_s: float = 20.0) -> dict:
+        """Ride out a JS-challenge wall (Cloudflare IUAM, Incapsula, Akamai
+        sensor, DataDome, PerimeterX) in a real browser, then harvest the
+        clearance cookies + User-Agent so plain HTTP clients pass the gate.
+
+        Payload mutation cannot beat these walls — the gate is a JS engine
+        check. We poll until the challenge markers leave the DOM (or a
+        clearance cookie appears), then hand back everything needed to
+        transplant the cleared session.
+        """
+        import asyncio
+        from ..core.waf import CLEARANCE_COOKIE_NAMES, challenge_markers
+
+        mode = await self.ensure()
+        if mode == "none":
+            return {"ok": False, "error": "no browser available (attach a "
+                    "browser MCP or pip install avci[browser])"}
+        t0 = asyncio.get_event_loop().time()
+        nav = await self.goto(url)
+        cleared = False
+        last_markers: list[str] = []
+        while asyncio.get_event_loop().time() - t0 < wait_s:
+            await asyncio.sleep(1.0)
+            html = await self.content()
+            if html.startswith("ERROR"):
+                break
+            last_markers = challenge_markers(html)
+            jar = await self.cookies()
+            clearance = [c for c in jar
+                         if any(c.get("name", "").startswith(n)
+                                for n in CLEARANCE_COOKIE_NAMES)]
+            if clearance or (not last_markers and "<html" in html.lower()):
+                cleared = True
+                break
+        jar = await self.cookies()
+        ua = await self.user_agent()
+        waited = round(asyncio.get_event_loop().time() - t0, 1)
+        out = {
+            "ok": cleared,
+            "mode": mode,
+            "navigation": nav,
+            "waited_s": waited,
+            "cookies": jar,
+            "clearance_cookies": [c.get("name") for c in jar
+                                  if any(c.get("name", "").startswith(n)
+                                         for n in CLEARANCE_COOKIE_NAMES)],
+            "user_agent": ua,
+            "final_url": self._page_url(),
+        }
+        if not cleared:
+            out["error"] = ("challenge still active after "
+                            f"{waited}s (markers={last_markers}) — "
+                            "interactive captcha or hardened bot score; "
+                            "try AVCI_PROXY IP diversity instead")
+        return out
+
     # ------------------------------------------------------------------
     async def links(self, base: str = "") -> str:
         """All links on the current page — SPA depth reconnaissance."""

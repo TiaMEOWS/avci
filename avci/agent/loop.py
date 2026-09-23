@@ -316,6 +316,8 @@ class HunterAgent:
         self.phase_label = "init"
         self.stop_requested = False
         self.resume_state = resume_state
+        self._waf_cleared: set[str] = set()   # hosts with a solved JS wall
+        self._waf_hinted: set[str] = set()    # hosts already told to waf_clear
 
     # ==================================================================
     # hooks
@@ -326,6 +328,30 @@ class HunterAgent:
                 self.tui.agent_hook(kind, detail)
             except Exception:  # noqa: BLE001
                 pass
+
+    def _install_clearance(self, res: dict) -> int:
+        """Transplant browser-harvested clearance cookies + UA into BOTH
+        egress clients (agent http + probe kit) so every subsequent call
+        rides the solved JS-challenge session."""
+        installed = 0
+        for c in res.get("cookies") or []:
+            name, value = c.get("name"), c.get("value")
+            if not name or value is None:
+                continue
+            domain = (c.get("domain") or "").lstrip(".")
+            path = c.get("path") or "/"
+            for client in (self._client, self.probes._client):
+                try:
+                    client.cookies.set(name, value, domain=domain or None,
+                                       path=path)
+                except Exception:  # noqa: BLE001
+                    client.cookies.set(name, value)
+            installed += 1
+        ua = (res.get("user_agent") or "").strip()
+        if ua:
+            self._client.headers["user-agent"] = ua
+            self.probes._client.headers["user-agent"] = ua
+        return installed
 
     def cost_summary(self) -> dict:
         return self.cost.summary()
@@ -667,6 +693,21 @@ class HunterAgent:
                 "expr": {"type": "string"},
                 "path": {"type": "string"},
             }, ["action"]),
+            schema("waf_clear", (
+                "JS-challenge walls (Cloudflare IUAM 'Just a moment', "
+                "Incapsula, Akamai sensor, DataDome, PerimeterX) cannot be "
+                "beaten by payload mutation — the gate is a JavaScript "
+                "engine check. This drives a real browser through the "
+                "challenge, harvests the clearance cookies (cf_clearance, "
+                "incap_ses, ak_bmsc, ...) + browser User-Agent, and installs "
+                "them into BOTH the agent client and the probe kit — every "
+                "subsequent http/probe call rides the cleared session. "
+                "Once per host; repeat only if the wall returns."
+            ), {
+                "url": {"type": "string",
+                        "description": "any in-scope URL on the walled host "
+                        "(the page that returned the challenge)"},
+            }, ["url"]),
             schema("register_account", (
                 "OFFENSIVE CHAIN: inbox (mail.tm→guerrilla fallback) → signup "
                 "on target → poll OTP/verify link → activate → vault session."
@@ -952,6 +993,35 @@ class HunterAgent:
             # chain-shape fingerprints → one-shot tool tips riding the
             # response (agents see the sink shape but not the doctrine)
             chain_hint = ""
+            # JS-challenge wall: payload mutation CANNOT pass a browser
+            # gate — name it and point at waf_clear, once per host, and
+            # never again after a successful clear (flapping is noise)
+            waf_hint = ""
+            try:
+                from ..core.waf import detect_js_challenge
+                _whost = httpx.URL(url).host
+                _wkind = detect_js_challenge(
+                    r.status_code, dict(r.headers), r.text or "")
+                if (_wkind and _whost not in self._waf_cleared
+                        and _whost not in self._waf_hinted):
+                    self._waf_hinted.add(_whost)
+                    waf_hint = (
+                        f"-- waf -- JS-challenge wall ({_wkind}): this is a "
+                        "browser gate, NOT a payload signature — mutation "
+                        "cannot pass it. Call waf_clear(url=<this URL>) to "
+                        "solve it with the headless browser; clearance "
+                        "cookies are then auto-installed into the agent "
+                        "client AND the probe kit.")
+                elif (_wkind and _whost in self._waf_cleared):
+                    waf_hint = (
+                        f"-- waf -- wall returned on cleared host ({_wkind}) "
+                        "— clearance expired or IP-bound; run waf_clear "
+                        "again (clearance cookies are often tied to egress "
+                        "IP — keep AVCI_PROXY stable for this host).")
+                    self._waf_cleared.discard(_whost)
+                    self._waf_hinted.discard(_whost)
+            except Exception:  # noqa: BLE001
+                waf_hint = ""
             try:
                 _low = (r.text or "")[:20000].lower()
                 _seen = getattr(self.state, "_chain_hints_seen", None)
@@ -1203,6 +1273,7 @@ class HunterAgent:
                           + (f"\n\n{cookie_txt}" if cookie_txt else "")
                           + (f"\n\n{link_txt}" if link_txt else "")
                           + (f"\n\n{filter_txt}" if filter_txt else "")
+                          + (f"\n\n{waf_hint}" if waf_hint else "")
                           + (f"\n\n{chain_hint}" if chain_hint else ""), 8000)
 
         if name == "raw_socket":
@@ -1760,6 +1831,48 @@ class HunterAgent:
             if action == "goto" and args.get("url"):
                 st.log_request("GET", args["url"], None, tool="browser")
             return _short(str(out), 8000)
+
+        if name == "waf_clear":
+            url = args["url"]
+            self.guard.check_url(url)
+            host = httpx.URL(url).host
+            await self.rl.acquire(url)
+            self.phase_label = "waf-clear"
+            self._hook("tool", f"waf_clear {host}")
+            res = await self.browser.solve_js_challenge(url)
+            st.log_request("GET", url, None, tool="waf_clear")
+            if res.get("ok"):
+                installed = self._install_clearance(res)
+                self._waf_cleared.add(host)
+                st.log_event("waf_clear", host=host, ok=True,
+                             cookies=res.get("clearance_cookies"))
+                receipt = self.evidence.store(
+                    f"waf_clear:{host}",
+                    {"host": host, "cookies_installed": installed,
+                     "clearance_cookies": res.get("clearance_cookies"),
+                     "user_agent": res.get("user_agent"),
+                     "waited_s": res.get("waited_s")})
+                self._hook("tool", f"waf cleared: {host}")
+                return json.dumps({
+                    "ok": True, "host": host,
+                    "cookies_installed": installed,
+                    "clearance_cookies": res.get("clearance_cookies"),
+                    "user_agent": res.get("user_agent"),
+                    "waited_s": res.get("waited_s"),
+                    "artifact": receipt["artifact"],
+                    "note": "cleared session installed into the agent client "
+                            "AND the probe kit — retry the walled request "
+                            "with plain http/probe calls now",
+                }, indent=1)
+            st.log_event("waf_clear", host=host, ok=False,
+                         error=res.get("error", "")[:200])
+            return json.dumps({
+                "ok": False, "host": host,
+                "error": res.get("error", "challenge not cleared"),
+                "note": "interactive captcha or hardened bot score — "
+                        "consider AVCI_PROXY IP diversity or a different "
+                        "entry point on the same host",
+            }, indent=1)
 
         # ---- dual identity -------------------------------------------------
         if name == "identity_pair":
