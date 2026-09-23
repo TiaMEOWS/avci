@@ -90,7 +90,7 @@ AVCI_ALLOW_PRIVATE=1 avci hunt --scope 127.0.0.1:8901
 | **Ops** | parallel fleet (one hunter per target), standing surface watchtower with webhook paging, cross-run SQLite memory with duplicate radar, HAR/proxy ingest |
 
 <p align="center">
-  <img src="docs/media/tui.svg" alt="AVCI live TUI dashboard" width="90%">
+  <img src="docs/media/tui.gif" alt="AVCI live TUI dashboard" width="90%">
 </p>
 
 ## Safety model
