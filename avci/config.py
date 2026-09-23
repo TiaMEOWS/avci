@@ -51,6 +51,9 @@ class AgentSettings:
     allow_private_targets: bool = os.environ.get("AVCI_ALLOW_PRIVATE", "0") == "1"
     # scan tool output for prompt-injection before it reaches the LLM
     injection_guard: bool = os.environ.get("AVCI_INJECTION_GUARD", "1") == "1"
+    # detect raw-request wandering and steer back to oracle probes
+    # (autopsy: failed attempts flail — 41.6 raw http calls vs 22.9 solved)
+    flail_watchdog: bool = os.environ.get("AVCI_FLAIL_WATCHDOG", "1") == "1"
 
 
 @dataclass

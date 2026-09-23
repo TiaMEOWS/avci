@@ -1989,6 +1989,11 @@ class HunterAgent:
                          _short(json.dumps(tc.arguments), 200))
                 if tc.name not in ("todo", "finish", "notes"):
                     did_work = True
+                if tc.name in ("http", "http_burst"):
+                    self._raw_calls = getattr(self, "_raw_calls", 0) + 1
+                elif tc.name == "probe" or tc.name in _PROBE_NAMES:
+                    self._structured_calls = (
+                        getattr(self, "_structured_calls", 0) + 1)
                 result = await self._dispatch(tc.name, tc.arguments)
                 st.observe(result)
                 content, inj = guard_output(
@@ -2022,6 +2027,31 @@ class HunterAgent:
                     st.log_event("net_stall", iterations=self.iterations,
                                  requests=reqs_now)
                     break
+
+            # flail watchdog: raw-request wandering vs structured probing.
+            # autopsy differential: failed attempts avg 41.6 raw http calls
+            # vs 22.9 for solved ones (3.7x more http_burst) — the failure
+            # mode is wandering, not under-trying. Catch the signature
+            # live and steer back to oracle-backed probes before the
+            # iteration budget burns out.
+            raw_n = getattr(self, "_raw_calls", 0)
+            probe_n = getattr(self, "_structured_calls", 0)
+            last_flail = getattr(self, "_flail_nudge_at", -999)
+            if (self.s.agent.flail_watchdog
+                    and raw_n >= 16 and raw_n >= 4 * max(probe_n, 1)
+                    and self.iterations - last_flail >= 12):
+                self._flail_nudge_at = self.iterations
+                st.log_event("flail_watchdog", raw=raw_n, probes=probe_n)
+                messages.append({"role": "user", "content": (
+                    f"FLAIL DETECTED: {raw_n} raw http/burst calls vs "
+                    f"{probe_n} oracle-backed probe calls. Solved hunts "
+                    "average ~23 raw calls — you are wandering, not "
+                    "hunting. STOP hand-crafting requests. Pick ONE "
+                    "unprobed surface from recon, run the probe class "
+                    "that matches its bug family, and let the oracle "
+                    "decide. If a filter rejects a payload, call "
+                    "mutate_payload with the banned characters instead "
+                    "of hand-editing.")})
 
             # endurance: compact old context, checkpoint every 5 iters
             messages, _ = compact_messages(messages)

@@ -76,6 +76,10 @@ Capabilities already shipped from this backlog:
 - **filter_wall** → the `mutate_payload` tool: deterministic,
   banned-aware WAF/filter bypass variants (case/comment splits, encoding
   ladder, SSTI delimiter swaps, IFS/glob tricks, traversal encodings).
+- **surface flailing** → the flail watchdog: at runtime, raw
+  http/burst calls dominating oracle-backed probes (≥16 raw, ≥4:1)
+  triggers a steer-back nudge and an audit event
+  (`AVCI_FLAIL_WATCHDOG=0` disables).
 
 ### Differential: where the failures actually died
 

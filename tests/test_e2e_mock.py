@@ -242,6 +242,54 @@ def test_e2e_llm_grace_recovers_from_outage(monkeypatch):
         srv.server_close()
 
 
+def test_e2e_flail_watchdog_fires_on_wandering(monkeypatch):
+    """Raw-request wandering (16+ http calls, zero probes) must trigger
+    the flail watchdog: a steer-back nudge reaches the brain and the
+    event lands in the audit log."""
+    monkeypatch.setenv("AVCI_GAUNTLET", "0")
+
+    srv = HTTPServer(("127.0.0.1", 0), Lab)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            settings = Settings.load(scope=[f"127.0.0.1:{port}"])
+            guard = ScopeGuard(rules=[f"127.0.0.1:{port}"], allow_private=True)
+            agent = HunterAgent(settings, guard, Path(td), "e2e-flail")
+
+            class CaptureLLM(ScriptLLM):
+                def __init__(self, script):
+                    super().__init__(script)
+                    self.seen: list[list[dict]] = []
+
+                def chat(self, messages, tools=None):
+                    self.seen.append([dict(m) for m in messages])
+                    return super().chat(messages, tools)
+
+            # 18 turns of raw http wandering, then finish
+            agent.llm = CaptureLLM(
+                [[("http", {"method": "GET",
+                            "url": f"{base}/search?q={i}"})]
+                 for i in range(18)]
+                + [[("finish", {"summary": "wandered then finished"})]])
+
+            result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
+
+            assert result["finished"] is True, result
+            user_msgs = [m.get("content") or ""
+                         for turn in agent.llm.seen for m in turn
+                         if m.get("role") == "user"]
+            assert any("FLAIL DETECTED" in c for c in user_msgs), user_msgs
+            events = [json.loads(line) for line in
+                      (Path(td) / "events.jsonl").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+            assert any(e.get("kind") == "flail_watchdog" for e in events)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 if __name__ == "__main__":
     class _MP:
         @staticmethod
@@ -251,5 +299,6 @@ if __name__ == "__main__":
     test_e2e_injection_guardrail_shields_target_content(_MP())
     test_e2e_mutate_payload_tool_dispatch(_MP())
     test_e2e_llm_grace_recovers_from_outage(_MP())
+    test_e2e_flail_watchdog_fires_on_wandering(_MP())
     print("E2E MOCK OK — loop, dispatch, oracle, triage, vault, report, "
-          "injection guardrail, mutate tool, llm grace")
+          "injection guardrail, mutate tool, llm grace, flail watchdog")
