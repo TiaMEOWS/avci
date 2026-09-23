@@ -77,6 +77,25 @@ Capabilities already shipped from this backlog:
   banned-aware WAF/filter bypass variants (case/comment splits, encoding
   ladder, SSTI delimiter swaps, IFS/glob tricks, traversal encodings).
 
+### Differential: where the failures actually died
+
+`autopsy.py` also compares solved-run finding paths against failed-run
+traffic (207 classifiable failed attempts):
+
+| Verdict | Attempts | Meaning |
+|---|---|---|
+| surface_missed | 76 (37%) | never touched the vulnerable surface |
+| hit_no_extract | 73 (35%) | reached the surface, could not extract |
+| surface_unknown | 58 (28%) | no solved finding to compare against |
+
+Failed attempts flail: 41.6 raw `http` calls on average vs 22.9 in
+solved runs (and 3.7× more `http_burst`) — wandering instead of probing.
+
+The per-bench split confirms the taxonomy and names the fix: XBEN-092
+(26 missed / 3 hit) is a *discovery* problem → recon capability;
+XBEN-030 (7 / 16) and XBEN-029 (4 / 11) are *extraction* problems →
+oracle/payload capability.
+
 ## Reproduce
 
 ```bash

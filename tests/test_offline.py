@@ -1094,3 +1094,31 @@ def test_autopsy_classifies_failure_modes(tmp_path):
     assert aut.expected_flag("XBEN-001-24") == (
         "FLAG{" + __import__("hashlib").sha256(b"XBEN-001-24").hexdigest()
         + "}")
+
+
+def test_autopsy_surface_differential(tmp_path):
+    aut = _autopsy()
+    assert aut.normalize_path("http://t/order/300401/receipt") == (
+        "/order/{n}/receipt")
+    assert aut.normalize_path("http://t/a/" + "b" * 32 + "/x") == "/a/{n}/x"
+    assert aut.normalize_path("http://t/search?q=1") == "/search"
+
+    solved = _mk_run(
+        tmp_path / "s", reqs=[{"status": 200, "url": "http://t/order/300401/receipt"}],
+        state={"findings": [{"title": "idor",
+                             "url": "http://t/order/300401/receipt"}]})
+    surfaces = aut.flag_surfaces(solved)
+    assert surfaces == {"/order/{n}/receipt"}
+
+    # failed run that hit the same template (different id) -> stood at the door
+    near = _mk_run(tmp_path / "n",
+                   reqs=[{"status": 200, "url": "http://t/order/300123/receipt"}])
+    assert aut.surface_verdict(near, surfaces) == "hit_no_extract"
+
+    # failed run that never went there -> missed the door
+    far = _mk_run(tmp_path / "f",
+                  reqs=[{"status": 200, "url": "http://t/search"}])
+    assert aut.surface_verdict(far, surfaces) == "surface_missed"
+
+    # no solved finding -> nothing to compare against
+    assert aut.surface_verdict(far, set()) == "surface_unknown"

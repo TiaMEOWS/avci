@@ -17,6 +17,7 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -123,6 +124,59 @@ def classify_run(run_dir, flag: str | None = None) -> dict:
     }
 
 
+def normalize_path(url: str) -> str:
+    """Template form of a URL path: numeric and hash-like segments become
+    {n} so /order/300401/receipt and /order/300123/receipt collide into
+    the same surface."""
+    try:
+        path = urlsplit(str(url)).path
+    except Exception:  # noqa: BLE001
+        path = str(url)
+    segs = []
+    for seg in path.split("/"):
+        if seg.isdigit() or (
+                len(seg) >= 24
+                and all(c in "0123456789abcdef-" for c in seg.lower())):
+            segs.append("{n}")
+        else:
+            segs.append(seg)
+    return "/".join(segs) or "/"
+
+
+def flag_surfaces(run_dir) -> set[str]:
+    """Normalized path templates of a SOLVED run's finding URLs — the
+    closest offline approximation of where the flag lived."""
+    try:
+        state = json.loads((Path(run_dir) / "state.json").read_text(
+            encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {normalize_path(f.get("url", ""))
+            for f in (state.get("findings") or []) if f.get("url")}
+
+
+def run_paths(run_dir) -> set[str]:
+    """Every normalized path template the run ever requested."""
+    return {normalize_path(r.get("url", ""))
+            for r in _read_jsonl(Path(run_dir) / "requests.jsonl")
+            if r.get("url")}
+
+
+def surface_verdict(run_dir, surfaces: set[str]) -> str:
+    """surface_unknown | surface_missed | hit_no_extract — did this failed
+    attempt ever stand at the door the solved run walked through?"""
+    if not surfaces:
+        return "surface_unknown"
+    return ("hit_no_extract" if run_paths(run_dir) & surfaces
+            else "surface_missed")
+
+
+def _tool_hist(run_dir) -> Counter:
+    return Counter(str(r.get("tool"))
+                   for r in _read_jsonl(Path(run_dir) / "requests.jsonl")
+                   if r.get("tool"))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bench", help="only this challenge")
@@ -140,6 +194,10 @@ def main() -> None:
         history.setdefault(r["bench"], []).append(r)
 
     global_prim: Counter = Counter()
+    global_surface: Counter = Counter()
+    tools_solved: Counter = Counter()
+    tools_failed: Counter = Counter()
+    n_solved = n_failed = 0
     report = []
     for bench in sorted(history):
         if args.bench and bench != args.bench:
@@ -165,12 +223,34 @@ def main() -> None:
                 rep["labels"] = ["solved"]
             attempts.append(rep)
             global_prim[rep["primary"]] += 1
+        # differential: where did solved runs strike — did the failed
+        # attempts ever stand at the same door?
+        run_dirs = [ROOT / str(r.get("run", "")).replace("\\", "/")
+                    for r in runs]
+        surfaces: set[str] = set()
+        for d, r in zip(run_dirs, runs):
+            if r.get("solved") and d.is_dir():
+                surfaces |= flag_surfaces(d)
+                tools_solved.update(_tool_hist(d))
+                n_solved += 1
+        for a, d, r in zip(attempts, run_dirs, runs):
+            if r.get("solved") or not d.is_dir():
+                continue
+            verdict = surface_verdict(d, surfaces)
+            a["surface"] = verdict
+            global_surface[verdict] += 1
+            tools_failed.update(_tool_hist(d))
+            n_failed += 1
         fails = Counter(a["primary"] for a in attempts
                         if a["primary"] != "solved")
+        surf_fails = Counter(a.get("surface") for a in attempts
+                             if a.get("surface"))
         report.append({"bench": bench, "attempts": len(runs),
                        "first_solve_attempt":
                            None if first_solve is None else first_solve + 1,
                        "failures": dict(fails),
+                       "surfaces": sorted(surfaces),
+                       "surface_failures": dict(surf_fails),
                        "detail": attempts})
         print(f"{bench}: attempts={len(runs)} first_solve="
               f"{'-' if first_solve is None else first_solve + 1} "
@@ -186,9 +266,32 @@ def main() -> None:
             continue
         print(f"  {n:4d}  {label}")
 
+    total_s = sum(global_surface.values())
+    print("\nSURFACE DIFFERENTIAL (flag surface = solved-run finding "
+          "paths; failed attempts only):")
+    for verdict, meaning in (
+            ("hit_no_extract", "stood at the door, did not extract"),
+            ("surface_missed", "never touched the door"),
+            ("surface_unknown", "surface unknown (no solved finding)")):
+        n = global_surface.get(verdict, 0)
+        pct = f" ({n / total_s:.0%})" if total_s else ""
+        print(f"  {verdict:18s} {n:4d}{pct}  {meaning}")
+
+    print("\nTOOL DIFFERENTIAL (avg calls per attempt, solved vs failed):")
+    for tool in sorted(set(tools_solved) | set(tools_failed)):
+        s = tools_solved.get(tool, 0) / max(n_solved, 1)
+        f = tools_failed.get(tool, 0) / max(n_failed, 1)
+        print(f"  {tool:18s} {s:6.1f} vs {f:6.1f}")
+
     if args.json:
         Path(args.json).write_text(json.dumps(
-            {"global": dict(global_prim), "benches": report}, indent=2),
+            {"global": dict(global_prim),
+             "surface": dict(global_surface),
+             "tools": {"solved_avg": {t: tools_solved[t] / max(n_solved, 1)
+                                     for t in tools_solved},
+                       "failed_avg": {t: tools_failed[t] / max(n_failed, 1)
+                                      for t in tools_failed}},
+             "benches": report}, indent=2),
             encoding="utf-8")
         print(f"\nwrote {args.json}")
 
