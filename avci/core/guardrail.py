@@ -11,10 +11,16 @@ evidence: on a hit the original bytes are preserved verbatim but wrapped
 in an explicit untrusted-data banner so the brain treats them as hostile
 evidence, and the caller logs an audit event. Fail-open on scanner
 errors — losing evidence is worse than missing a pattern.
+
+Evasion layer: attackers hide instructions inside base64 blobs. The
+scanner also decodes printable base64 windows (skipping binary garbage
+and JWT-shaped tokens) and scans the decoded text too — the banner then
+quotes the decoded snippet, not the blob.
 """
 
 from __future__ import annotations
 
+import base64
 import re
 from dataclasses import dataclass, field
 
@@ -53,6 +59,11 @@ _PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 
 _MAX_HITS = 8
 
+# base64 blob >= 40 chars, boundary-anchored so it does not eat words
+_B64_RE = re.compile(
+    r"(?<![A-Za-z0-9+/=])(?:[A-Za-z0-9+/]{4}){5,}"
+    r"(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?(?![A-Za-z0-9+/=])")
+
 
 @dataclass
 class GuardrailHit:
@@ -88,16 +99,42 @@ def scan_output(text: str, *, max_hits: int = _MAX_HITS) -> GuardrailReport:
     report = GuardrailReport()
     if not text:
         return report
-    for name, rx in _PATTERNS:
-        if len(report.hits) >= max_hits:
-            break
-        match = rx.search(text)
-        if match:
-            report.hits.append(
-                GuardrailHit(pattern=name,
-                             snippet=_snippet(text, match.start(),
-                                              match.end())))
+    sources = [(text, False)]
+    sources.extend((w, True) for w in _decoded_windows(text))
+    for source, was_encoded in sources:
+        for name, rx in _PATTERNS:
+            if len(report.hits) >= max_hits:
+                return report
+            match = rx.search(source)
+            if match:
+                snippet = _snippet(source, match.start(), match.end())
+                if was_encoded:
+                    snippet = "[base64-decoded] " + snippet
+                if all(h.pattern != name or h.snippet != snippet
+                       for h in report.hits):
+                    report.hits.append(GuardrailHit(pattern=name,
+                                                    snippet=snippet))
     return report
+
+
+def _decoded_windows(text: str, limit: int = 4) -> list[str]:
+    """Printable base64 windows decoded for a second scan pass. Binary
+    blobs and short tokens are skipped; only fully printable, >=16 char
+    decodings are scanned (JWTs decode to JSON — no injection patterns,
+    no false positives)."""
+    windows = []
+    for match in _B64_RE.finditer(text):
+        if len(windows) >= limit:
+            break
+        try:
+            decoded = base64.b64decode(match.group(0),
+                                       validate=True).decode("utf-8")
+        except Exception:  # noqa: BLE001 — not UTF-8, not instructions
+            continue
+        if len(decoded) >= 16 and all(
+                c.isprintable() or c in "\n\t\r " for c in decoded):
+            windows.append(decoded)
+    return windows
 
 
 def shield_output(text: str, report: GuardrailReport) -> str:

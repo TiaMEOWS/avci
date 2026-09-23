@@ -1,6 +1,6 @@
 [project]
 name = "avci"
-version = "1.3.3"
+version = "1.3.4"
 description = "AVCI — Autonomous Offensive Blackbox Hunter. Cold-URL blackbox pentest agent for authorized targets: full-surface recon, generic MCP browser client, temp-mail registration, any-LLM brain (Claude/GPT/DeepSeek/Kimi/GLM/local via LiteLLM), coverage-ledger discipline, evidence-oracle findings, 45 oracle-backed probe classes, OOB blind channel, attack chains + compliance mapping, rate-limited long-run endurance, Textual TUI, checkpoint/resume. XBOW validation-benchmarks: 104/104."
 requires-python = ">=3.11"
 dependencies = [

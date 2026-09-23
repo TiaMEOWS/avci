@@ -101,7 +101,8 @@ AVCI_ALLOW_PRIVATE=1 avci hunt --scope 127.0.0.1:8901
 - **Prompt-injection guardrail:** target output is scanned for
   instruction-like content before it reaches the LLM; hits are wrapped as
   untrusted data, logged to `events.jsonl`, and never obeyed
-  (`AVCI_INJECTION_GUARD=0` disables).
+  (`AVCI_INJECTION_GUARD=0` disables). Base64-hidden instructions are
+  decoded and scanned too.
 - **Every byte is logged:** `runs/<id>/requests.jsonl`, `events.jsonl`,
   `state.json`, plus a tamper-evident evidence vault verified at run end.
 
