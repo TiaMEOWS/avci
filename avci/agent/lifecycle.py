@@ -129,6 +129,22 @@ class LifecycleTools:
                 return ("REFUSED: unhandled needs_follow_up entries — "
                         f"{len(follow_ups)} items. Resolve them "
                         "(retry + re-record outcome, or rule_out with evidence).")
+            # gave_up_early guard (autopsy: 13/322 XBOW attempts quit with
+            # <30 requests and zero findings — almost always a miss, not a
+            # clean target). One challenge; a second finish is respected.
+            reqs = len(getattr(st, "request_log", []) or [])
+            if (reqs < 30 and not st.findings
+                    and not getattr(self, "_early_warned", False)):
+                self._early_warned = True
+                st.log_event("early_finish_warned", requests=reqs)
+                return (
+                    f"REFUSED (one-time): {reqs} requests and zero "
+                    "findings — hunts that quit this early are almost "
+                    "always misses, not clean targets. Sweep the untried "
+                    "families first: authenticated surfaces, parameter "
+                    "classes, probe classes you have not run. If coverage "
+                    "is genuinely complete, call finish again — it will "
+                    "be respected.")
             self._finish["done"] = True
             self._finish["summary"] = args["summary"]
             return "OK: run finished"

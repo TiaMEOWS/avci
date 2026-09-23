@@ -133,6 +133,7 @@ def test_e2e_injection_guardrail_shields_target_content(monkeypatch):
             agent.llm = CaptureLLM([
                 [("http", {"method": "GET", "url": f"{base}/guestbook"})],
                 [("finish", {"summary": "injection fixture run"})],
+                [("finish", {"summary": "injection fixture run"})],
             ])
 
             result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
@@ -178,6 +179,7 @@ def test_e2e_mutate_payload_tool_dispatch(monkeypatch):
             agent.llm = CaptureLLM([
                 [("mutate_payload", {"payload": "1 UNION SELECT 1--",
                                      "cls": "sqli", "banned": ["'"]})],
+                [("finish", {"summary": "mutate dispatch run"})],
                 [("finish", {"summary": "mutate dispatch run"})],
             ])
 
@@ -226,12 +228,14 @@ def test_e2e_llm_grace_recovers_from_outage(monkeypatch):
 
             agent.llm = FlakyLLM([
                 [("finish", {"summary": "survived the outage"})],
+                [("finish", {"summary": "survived the outage"})],
             ])
 
             result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
 
             assert result["finished"] is True, result
-            assert agent.llm.calls == 3  # 2 outages + 1 success
+            # 2 outages + finish#1 (early-guard refusal) + finish#2
+            assert agent.llm.calls == 4
             events = [json.loads(line) for line in
                       (Path(td) / "events.jsonl").read_text(
                           encoding="utf-8").splitlines() if line.strip()]
@@ -271,7 +275,8 @@ def test_e2e_flail_watchdog_fires_on_wandering(monkeypatch):
             agent.llm = CaptureLLM(
                 [[("http", {"method": "GET",
                             "url": f"{base}/search?q={i}"})]
-                 for i in range(18)]
+                for i in range(18)]
+                + [[("finish", {"summary": "wandered then finished"})]]
                 + [[("finish", {"summary": "wandered then finished"})]])
 
             result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
@@ -290,6 +295,54 @@ def test_e2e_flail_watchdog_fires_on_wandering(monkeypatch):
         srv.server_close()
 
 
+def test_e2e_early_finish_guard_challenges_once(monkeypatch):
+    """finish with <30 requests and zero findings is REFUSED once (the
+    gave_up_early guard), logged, and respected on the second call."""
+    monkeypatch.setenv("AVCI_GAUNTLET", "0")
+
+    srv = HTTPServer(("127.0.0.1", 0), Lab)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            settings = Settings.load(scope=[f"127.0.0.1:{port}"])
+            guard = ScopeGuard(rules=[f"127.0.0.1:{port}"], allow_private=True)
+            agent = HunterAgent(settings, guard, Path(td), "e2e-earlyfinish")
+
+            class CaptureLLM(ScriptLLM):
+                def __init__(self, script):
+                    super().__init__(script)
+                    self.seen: list[list[dict]] = []
+
+                def chat(self, messages, tools=None):
+                    self.seen.append([dict(m) for m in messages])
+                    return super().chat(messages, tools)
+
+            agent.llm = CaptureLLM([
+                [("http", {"method": "GET", "url": f"{base}/"})],
+                [("finish", {"summary": "too early"})],
+                [("finish", {"summary": "insisting, coverage is complete"})],
+            ])
+
+            result = asyncio.run(agent.run(f"127.0.0.1:{port}"))
+
+            assert result["finished"] is True, result
+            assert result["summary"] == "insisting, coverage is complete"
+            tool_msgs = [m.get("content") or ""
+                         for turn in agent.llm.seen for m in turn
+                         if m.get("role") == "tool"]
+            assert any("REFUSED (one-time)" in c for c in tool_msgs)
+            events = [json.loads(line) for line in
+                      (Path(td) / "events.jsonl").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+            assert any(e.get("kind") == "early_finish_warned"
+                       for e in events)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 if __name__ == "__main__":
     class _MP:
         @staticmethod
@@ -300,5 +353,7 @@ if __name__ == "__main__":
     test_e2e_mutate_payload_tool_dispatch(_MP())
     test_e2e_llm_grace_recovers_from_outage(_MP())
     test_e2e_flail_watchdog_fires_on_wandering(_MP())
+    test_e2e_early_finish_guard_challenges_once(_MP())
     print("E2E MOCK OK — loop, dispatch, oracle, triage, vault, report, "
-          "injection guardrail, mutate tool, llm grace, flail watchdog")
+          "injection guardrail, mutate tool, llm grace, flail watchdog, "
+          "early-finish guard")

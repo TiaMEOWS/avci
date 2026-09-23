@@ -80,6 +80,10 @@ Capabilities already shipped from this backlog:
   http/burst calls dominating oracle-backed probes (≥16 raw, ≥4:1)
   triggers a steer-back nudge and an audit event
   (`AVCI_FLAIL_WATCHDOG=0` disables).
+- **gave_up_early (13)** → one-time early-finish challenge: `finish`
+  with <30 requests and zero findings is REFUSED once, logged, and
+  respected on insistence — quitting early is almost always a miss,
+  not a clean target.
 
 ### Differential: where the failures actually died
 
