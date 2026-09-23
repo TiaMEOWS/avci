@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="26" viewBox="0 0 800 26" role="img" aria-label="recon to report — autonomous">
+  <!-- SMIL rotation: 4 phrases, 16s loop, each visible ~3s. No scripts,
+       transparent background (works on light and dark themes). -->
+  <text x="0" y="18" font-family="Consolas, Menlo, monospace" font-size="15" opacity="0">
+    <tspan fill="#ff7b3d">avci$ </tspan><tspan fill="#8b949e">recon &gt; 45 probes &gt; oracle &gt; gauntlet &gt; report</tspan>
+    <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;0.05;0.23;0.26;1" dur="16s" begin="0s" repeatCount="indefinite"/>
+  </text>
+  <text x="0" y="18" font-family="Consolas, Menlo, monospace" font-size="15" opacity="0">
+    <tspan fill="#ff7b3d">avci$ </tspan><tspan fill="#8b949e">XBOW 104/104 · pass@1 65/104 · every solve evidenced</tspan>
+    <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;0.05;0.23;0.26;1" dur="16s" begin="4s" repeatCount="indefinite"/>
+  </text>
+  <text x="0" y="18" font-family="Consolas, Menlo, monospace" font-size="15" opacity="0">
+    <tspan fill="#ff7b3d">avci$ </tspan><tspan fill="#8b949e">prompt-injection guardrail · evidence vault · any LLM</tspan>
+    <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;0.05;0.23;0.26;1" dur="16s" begin="8s" repeatCount="indefinite"/>
+  </text>
+  <text x="0" y="18" font-family="Consolas, Menlo, monospace" font-size="15" opacity="0">
+    <tspan fill="#ff7b3d">avci$ </tspan><tspan fill="#8b949e">cold URL in — program-ready report out</tspan>
+    <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;0.05;0.23;0.26;1" dur="16s" begin="12s" repeatCount="indefinite"/>
+  </text>
+</svg>

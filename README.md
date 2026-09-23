@@ -3,6 +3,10 @@
 </p>
 
 <p align="center">
+  <img src="docs/media/tagline.svg" alt="avci$ recon > 45 probes > oracle > gauntlet > report" width="80%">
+</p>
+
+<p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT"></a>
   <a href="https://github.com/TiaMEOWS/avci/actions/workflows/ci.yml"><img src="https://github.com/TiaMEOWS/avci/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-%3E%3D3.11-3776ab" alt="Python 3.11+">
